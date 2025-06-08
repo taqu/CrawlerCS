@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Settings xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+	<Location>LEMON</Location>
+  <Domain />
+  <User />
+  <Password />
+	<Root>d/Projects/CrawlerCS/test-data</Root>
+  <NumThreads>4</NumThreads>
+	<IncludeEx>*</IncludeEx>
+	<ExcludeEx>zip,tgz,gz,lzh,7z</ExcludeEx>
+</Settings>

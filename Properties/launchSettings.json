@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "CrawlerCS": {
+      "commandName": "Project",
+      "workingDirectory": "$(ProjectDir)"
+    }
+  }
+}
