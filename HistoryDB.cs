@@ -12,6 +12,18 @@ namespace CrawlerCS
             public DateTime LastUpdate { get;set; }
         }
 
+        public static DateTime RoundDownNanoSeconds(in DateTime dateTime)
+        {
+            return new DateTime(
+                dateTime.Year,
+                dateTime.Month,
+                dateTime.Day,
+                dateTime.Hour,
+                dateTime.Minute,
+                dateTime.Second,
+                dateTime.Millisecond);
+        }
+
         private bool disposed_;
         private LiteDatabase? db_;
         private ILiteCollection<Document>? collection_;
@@ -67,6 +79,7 @@ namespace CrawlerCS
             Debug.Assert(null != db_);
             Debug.Assert(null != collection_);
             Debug.Assert(!string.IsNullOrEmpty(url));
+            lastUpdate = RoundDownNanoSeconds(lastUpdate);
             Document document = collection_.FindOne(x=>x.Url==url);
             if(null == document)
             {
@@ -79,7 +92,7 @@ namespace CrawlerCS
                 collection_.Update(id, new Document(){Url=url, LastUpdate=lastUpdate});
                 return true;
             }
-            return false;
+            return document.LastUpdate != lastUpdate;
         }
 
         public void Delete(string url)
