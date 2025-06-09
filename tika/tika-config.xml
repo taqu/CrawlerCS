@@ -1,23 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <properties>
-  <parsers>
-    <!-- Default Parser for most things, except for 2 mime types, and never
+	<parsers>
+		<!-- Default Parser for most things, except for 2 mime types, and never
          use the Executable Parser -->
-    <parser class="org.apache.tika.parser.DefaultParser">
-      <!--mime-exclude>application/pdf</mime-exclude-->
-      <parser-exclude class="org.apache.tika.parser.executable.ExecutableParser"/>
-    </parser>
-    <parser class="org.apache.tika.parser.pdf.PDFParser">
-        <params>
-            <!-- these are the defaults; you only need to specify the ones you want to modify -->
-            <param name="allowExtractionForAccessibility" type="bool">false</param>
-            <param name="extractActions" type="bool">false</param>
-            <param name="catchIntermediateIOExceptions" type="bool">false</param>
-            <param name="extractAnnotationText" type="bool">false</param>
-            <param name="extractFontNames" type="bool">false</param>
-            <param name="extractMarkedContent" type="bool">false</param>
-            <param name="extractInlineImages" type="bool">false</param>
-        </params>
-    </parser>
-</parsers>
+		<parser class="org.apache.tika.parser.DefaultParser">
+			<!--mime-exclude>application/pdf</mime-exclude-->
+			<parser-exclude class="org.apache.tika.parser.executable.ExecutableParser"/>
+		</parser>
+		<parser class="org.apache.tika.parser.pdf.PDFParser">
+			<params>
+				<!-- these are the defaults; you only need to specify the ones you want to modify -->
+				<param name="allowExtractionForAccessibility" type="bool">false</param>
+				<param name="extractActions" type="bool">false</param>
+				<param name="catchIntermediateIOExceptions" type="bool">false</param>
+				<param name="extractAnnotationText" type="bool">false</param>
+				<param name="extractFontNames" type="bool">false</param>
+				<param name="extractMarkedContent" type="bool">false</param>
+				<param name="extractInlineImages" type="bool">false</param>
+			</params>
+		</parser>
+		<parser class="org.apache.tika.parser.microsoft.OfficeParser">
+			<params>
+				<param name="extractInlineImages" type="bool">false</param>
+			</params>
+		</parser>
+		<parser class="org.apache.tika.parser.odf.OpenDocumentParser">
+			<params>
+				<param name="extractInlineImages" type="bool">false</param>
+			</params>
+		</parser>
+	</parsers>
 </properties>

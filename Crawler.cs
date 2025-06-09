@@ -72,6 +72,7 @@ namespace CrawlerCS
                 }
                 catch
                 {
+                    collection_.CompleteAdding();
                 }
             });
 

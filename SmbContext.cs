@@ -127,7 +127,7 @@ namespace CrawlerCS
         {
             try
             {
-                path = Path.Combine(remoteName_, path);
+                path = Path.GetFullPath(Path.Combine(remoteName_, path));
                 DirectoryInfo directoryInfo = new DirectoryInfo(path);
                 return directoryInfo;
             }

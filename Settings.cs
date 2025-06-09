@@ -14,6 +14,7 @@ namespace CrawlerCS
         public int NumThreads { get => numThreads_; set => numThreads_ = value; }
         public string IncludeEx { get => includeEx_; set => includeEx_ = value; }
         public string ExcludeEx { get => excludeEx_; set => excludeEx_ = value; }
+        public string GZipEx { get => gzipEx_; set => gzipEx_ = value; }
 
         private string location_ = string.Empty;
         private string domain_ = string.Empty;
@@ -23,8 +24,10 @@ namespace CrawlerCS
         private int numThreads_ = 1;
         private string includeEx_ = string.Empty;
         private string excludeEx_ = string.Empty;
+        private string gzipEx_ = string.Empty;
         private HashSet<string> targetExtensions_ = new HashSet<string>();
         private HashSet<string> excludeExtensions_ = new HashSet<string>();
+        private HashSet<string> gripExtensions_ = new HashSet<string>();
 
         public static Settings? Load(string path)
         {
@@ -123,6 +126,19 @@ namespace CrawlerCS
                     excludeExtensions_.Add(s.ToLower());
                 }
             }
+            {
+                gripExtensions_.Clear();
+                gzipEx_ = TrimWhole(gzipEx_);
+                string[] splits = gzipEx_.Split(",");
+                foreach (string s in splits)
+                {
+                    if (string.IsNullOrEmpty(s))
+                    {
+                        continue;
+                    }
+                    gripExtensions_.Add(s.ToLower());
+                }
+            }
         }
 
         public bool IsTarget(string ext)
@@ -145,6 +161,21 @@ namespace CrawlerCS
                 return !excludeExtensions_.TryGetValue(ext, out r);
             }
             return targetExtensions_.TryGetValue(ext, out r);
+        }
+
+        public bool IsGZip(string ext)
+        {
+            if (ext.Length <= 0)
+            {
+                return false;
+            }
+            string r;
+            ext = ext.ToLower();
+            if (ext[0] == '.')
+            {
+                ext = ext.Substring(1);
+            }
+            return gripExtensions_.TryGetValue(ext, out r);
         }
     }
 }

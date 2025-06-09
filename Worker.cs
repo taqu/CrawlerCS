@@ -1,12 +1,15 @@
 ﻿using Boilerpipe.Net.Extractors;
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -19,19 +22,20 @@ namespace CrawlerCS
 {
     public class Worker
     {
-        public const int BufferSize = 4096;
         private HttpClient httpClient_;
         private Crawler? parent_;
-        private byte[] buffer_ = new byte[BufferSize];
         private static readonly DateTime UnixStart = new DateTime(1970, 1, 1);
 
         public Worker(Crawler? parent)
         {
             parent_ = parent;
-            httpClient_ = new HttpClient();
+            HttpClientHandler httpClientHandler = new HttpClientHandler();
+            httpClientHandler.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+            httpClient_ = new HttpClient(httpClientHandler);
             httpClient_.BaseAddress = new Uri(Tika.TikaUrl);
             httpClient_.DefaultRequestHeaders.Add("Host", "localhost:9998");
             httpClient_.DefaultRequestHeaders.Add("Accept", "application/json");
+            httpClient_.DefaultRequestHeaders.Add("X-Tika-Skip-Embedded", "true");
             httpClient_.DefaultRequestHeaders.Add("Accept-Encoding", "gzip");
         }
 
@@ -43,45 +47,128 @@ namespace CrawlerCS
                 while (!parent_.Collection.IsCompleted)
                 {
                     Item item = parent_.Collection.Take();
-                    if(!parent_.Settings.IsTarget(item.fileInfo_.Extension)){
+                    if (!parent_.Settings.IsTarget(item.fileInfo_.Extension))
+                    {
                         continue;
                     }
-                    if(!parent_.HistoryDB.Upsert(item.fileInfo_.FullName, item.fileInfo_.LastWriteTime)){
+                    if (!parent_.HistoryDB.NeedsUpdate(item.fileInfo_.FullName, item.fileInfo_.LastWriteTime))
+                    {
                         continue;
                     }
-                    Upload(item.fileInfo_);
+                    if (Upload(item.fileInfo_)) {
+                        parent_.HistoryDB.Upsert(item.fileInfo_.FullName, item.fileInfo_.LastWriteTime);
+                    }
                 }
             }
-            catch {
+            catch
+            {
                 parent_.AddResult(false);
             }
         }
 
-        private void Upload(FileSystemInfo fileInfo)
+        private static void SetMediaType(HttpContentHeaders headers, string ext)
         {
-            try {
-                using(FileStream fileStream = new FileStream(fileInfo.FullName, FileMode.Open, FileAccess.Read))
-                    using(StreamContent streamContent = new StreamContent(fileStream))
-                {
-                    //content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+            if (string.IsNullOrEmpty(ext))
+            {
+                return;
+            }
+            if (ext[0] == '.')
+            {
+                ext = ext.Substring(1);
+            }
+            switch (ext)
+            {
+                case "txt":
+                case "text":
+                    case "c":
+                case "cpp":
+                    case "c++":
+                    case "h":
+                    case "hpp":
+                    case "py":
+                    case "inc":
+                    case "inl":
+                    case "sh":
+                    case "bat":
+                    headers.ContentType = new MediaTypeHeaderValue("text/plain");
+                    break;
+                case "csv":
+                case "tsv":
+                    headers.ContentType = new MediaTypeHeaderValue("text/csv");
+                    break;
+                case "html":
+                case "htm":
+                    headers.ContentType = new MediaTypeHeaderValue("text/html");
+                    break;
+                case "js":
+                case "ts":
+                    headers.ContentType = new MediaTypeHeaderValue("text/javascript");
+                    break;
+                case "json":
+                    headers.ContentType = new MediaTypeHeaderValue("application/json");
+                    break;
+                case "pdf":
+                    headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+                    break;
+                case "xls":
+                    headers.ContentType = new MediaTypeHeaderValue("application/vnd.ms-excel");
+                    break;
+                case "xlsx":
+                    headers.ContentType = new MediaTypeHeaderValue("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+                    break;
+                case "ppt":
+                    headers.ContentType = new MediaTypeHeaderValue("application/vnd.ms-powerpoint");
+                    break;
+                case "pptx":
+                    headers.ContentType = new MediaTypeHeaderValue("application/vnd.openxmlformats-officedocument.presentationml.presentation");
+                    break;
+                case "doc":
+                    headers.ContentType = new MediaTypeHeaderValue("application/msword");
+                    break;
+                case "docx":
+                    headers.ContentType = new MediaTypeHeaderValue("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+                    break;
+            }
+        }
 
+        private bool Upload(FileSystemInfo fileInfo)
+        {
+            try
+            {
+                bool gzip = false;//parent_.Settings.IsGZip(fileInfo.Extension);
+                using (FileStream fileStream = new FileStream(fileInfo.FullName, FileMode.Open, FileAccess.Read))
+                using(StreamContent streamContent = gzip? new StreamContent(new GZipStream(fileStream, CompressionMode.Compress)): new StreamContent(fileStream))
+                {
+                    if (gzip)
+                    {
+                        streamContent.Headers.ContentEncoding.Add("gzip");
+                    }
+                    SetMediaType(streamContent.Headers, fileInfo.Extension);;
                     Task<HttpResponseMessage> task = httpClient_.PutAsync(Tika.TikaUrl, streamContent);
                     task.Wait();
                     using HttpResponseMessage result = task.Result;
                     if (result.StatusCode != HttpStatusCode.OK)
                     {
-                        return;
+                        return false;
                     }
-                    HttpStatusCode code = result.StatusCode;
-                    DebugUtil.Print("[{0}] {1} status: {2}", Thread.CurrentThread.ManagedThreadId, fileInfo.FullName, code);
+                    string str = result.Content.ReadAsStringAsync().Result;
                     byte[] bytes = result.Content.ReadAsByteArrayAsync().Result;
-                    ReadContent(bytes);
+                    Content content = ReadContent(bytes);
+                    if (string.IsNullOrEmpty(content.content_))
+                    {
+                        return false;
+                    }
+                    DebugUtil.Print("{0}\n", Encoding.UTF8.GetString(bytes));
+                    DebugUtil.Print("{0}", content.content_);
                     //CommonExtractors.KeepEverythingExtractor.Process
+                    streamContent.Dispose();
                 }
+                return true;
             }
             catch (Exception ex)
             {
                 DebugUtil.Print(ex.ToString());
+                return false;
             }
         }
 
@@ -89,27 +176,69 @@ namespace CrawlerCS
         {
             private byte[] bytes_;
             private long start_;
-            private int length_;
+            private long end_;
+            private long next_;
 
-            public UT8TextReader(ReadOnlySpan<byte> bytes)
+            public UT8TextReader(byte[] bytes, long start, long end)
             {
                 bytes_ = bytes;
-            }
-
-            protected override void Dispose(bool disposing)
-            {
+                start_ = start;
+                end_ = end;
+                next_ = start_;
             }
 
             public override int Peek()
             {
-                return -1;
+                return next_<end_? bytes_[next_] : -1;
             }
 
             public override int Read()
             {
-                return -1;
+                if (end_ <= next_)
+                {
+                    return -1;
+                }
+                int length = 0;
+                Span<byte> buffer = stackalloc byte[4];
+                buffer[0] = bytes_[next_];
+                if ((buffer[0] & 0b10000000) == 0b00000000)
+                {
+                    ++next_;
+                    return buffer[0];
+                }
+                else if ((buffer[0] & 0b11100000) == 0b11000000)
+                {
+                    if (end_ <= (next_ + 1))
+                    {
+                        return -1;
+                    }
+                    length = 2;
+                    buffer[1] = bytes_[next_+1];
+                }
+                else if ((buffer[0] & 0b11110000) == 0b11100000)
+                {
+                    if (end_ <= (next_ + 2))
+                    {
+                        return -1;
+                    }
+                    length = 3;
+                    buffer[1] = bytes_[next_+1];
+                    buffer[2] = bytes_[next_+2];
+                }else if ((buffer[0] & 0b11111000) == 0b11110000)
+                {
+                    if (end_ <= (next_ + 3))
+                    {
+                        return -1;
+                    }
+                    length = 4;
+                    buffer[1] = bytes_[next_+1];
+                    buffer[2] = bytes_[next_+2];
+                    buffer[3] = bytes_[next_+3];
+                }
+                string c = Encoding.UTF8.GetString(buffer.Slice(0, length));
+                next_ += length;
+                return 0<c.Length? c[0] : -1;
             }
-
         }
 
         private static readonly byte[] Property_Creator = Encoding.UTF8.GetBytes("dc:creator");
@@ -133,20 +262,40 @@ namespace CrawlerCS
             public string lastAuthor_ = string.Empty;
             public DateTime created_ = UnixStart;
             public DateTime modified_ = UnixStart;
+            public string content_ = string.Empty;
         }
 
-        private void ReadContent(byte[] bytes)
+        private bool ReadArrayFirst(ref Content content, Utf8JsonReader reader)
+        {
+            Debug.Assert(JsonTokenType.StartArray == reader.TokenType);
+            while (reader.Read())
+            {
+                switch (reader.TokenType)
+                {
+                    case JsonTokenType.String:
+                        content.type_ = reader.GetString();
+                        do
+                        {
+                            reader.Read();
+                        }while(JsonTokenType.EndArray != reader.TokenType);
+                        return true;
+                    case JsonTokenType.EndArray:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+            return false;
+        }
+
+        private Content ReadContent(byte[] bytes)
         {
             Content content = new Content();
             Utf8JsonReader reader = new Utf8JsonReader(bytes);
             while (reader.Read())
             {
-                JsonTokenType tokenType = reader.TokenType;
-
-                switch (tokenType)
+                switch (reader.TokenType)
                 {
-                    case JsonTokenType.StartObject:
-                        break;
                     case JsonTokenType.PropertyName:
                         if (reader.ValueTextEquals(Property_Creator))
                         {
@@ -175,21 +324,38 @@ namespace CrawlerCS
                         else if (reader.ValueTextEquals(Property_Length))
                         {
                             reader.Read();
-                            content.length_ = reader.GetInt64();
+                            string str = reader.GetString();
+                            long.TryParse(str, out content.length_);
                         }
                         else if (reader.ValueTextEquals(Property_Type))
                         {
                             reader.Read();
-                            content.type_ = reader.GetString();
+                            if (reader.TokenType == JsonTokenType.StartArray)
+                            {
+                                if(!ReadArrayFirst(ref content, reader))
+                                {
+                                    throw new Exception();
+                                }
+                            }
+                            else
+                            {
+                                content.type_ = reader.GetString();
+                            }
                         }
                         else if (reader.ValueTextEquals(Property_Content))
                         {
                             reader.Read();
-                            long start = reader.TokenStartIndex;
-                            int length = reader.ValueSpan.Length;
+                            long start = reader.TokenStartIndex + 1;
+                            long length = reader.ValueSpan.Length;
+                            UT8TextReader textReader = new UT8TextReader(bytes, start, start + length);
+                            content.content_ = CommonExtractors.KeepEverythingExtractor.GetText(textReader);
+                        }
+                        break;
+                    default:
                         break;
                 }
             }
+            return content;
         }
     }
 }

@@ -74,7 +74,21 @@ namespace CrawlerCS
             return null != document;
         }
 
-        public bool Upsert(string url, DateTime lastUpdate)
+        public bool NeedsUpdate(string url, DateTime lastUpdate)
+        {
+            Debug.Assert(null != db_);
+            Debug.Assert(null != collection_);
+            Debug.Assert(!string.IsNullOrEmpty(url));
+            lastUpdate = RoundDownNanoSeconds(lastUpdate);
+            Document document = collection_.FindOne(x=>x.Url==url);
+            if(null == document)
+            {
+                return true;
+            }
+            return document.LastUpdate < lastUpdate;
+        }
+
+        public void Upsert(string url, DateTime lastUpdate)
         {
             Debug.Assert(null != db_);
             Debug.Assert(null != collection_);
@@ -84,15 +98,12 @@ namespace CrawlerCS
             if(null == document)
             {
                 collection_.Insert(new Document(){Url=url, LastUpdate=lastUpdate});
-                return true;
             }
-            else if(document.LastUpdate < lastUpdate)
+            else
             {
                 BsonValue id = new BsonValue(document.id);
                 collection_.Update(id, new Document(){Url=url, LastUpdate=lastUpdate});
-                return true;
             }
-            return document.LastUpdate != lastUpdate;
         }
 
         public void Delete(string url)
