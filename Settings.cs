@@ -18,6 +18,7 @@ namespace CrawlerCS
         public string DBUrl { get => dbUrl_; set => dbUrl_ = value; }
         public string DocIndex { get => docIndex_; set => docIndex_ = value; }
         public string VecIndex { get => vecIndex_; set => vecIndex_ = value; }
+        public int MaxChunkTokens { get=>maxChunkTokens_; set => maxChunkTokens_ = value; }
 
 
         private string location_ = string.Empty;
@@ -32,6 +33,7 @@ namespace CrawlerCS
         private string dbUrl_ = string.Empty;
         private string docIndex_ = string.Empty;
         private string vecIndex_ = string.Empty;
+        private int maxChunkTokens_ = 500;
         private HashSet<string> targetExtensions_ = new HashSet<string>();
         private HashSet<string> excludeExtensions_ = new HashSet<string>();
         private HashSet<string> gripExtensions_ = new HashSet<string>();

@@ -1,29 +1,29 @@
 {
   "mappings": {
     "properties": {
-      "url": {
-        "type": "keyword"
-      },
-      "type": {
-        "type": "keyword"
-      },
-      "title": {
-        "type": "text",
-        "analyzer": "kuromoji"
-      },
-      "length": {
-        "type": "long"
-      },
-      "author": {
-        "type": "keyword"
-      },
-      "modified": {
-        "type": "date"
-      },
-      "content": {
-        "type": "text",
-        "analyzer": "kuromoji"
-      }
+        "url": {
+            "type": "keyword"
+        },
+        "type": {
+            "type": "keyword"
+        },
+        "title": {
+            "type": "text",
+            "analyzer": "kuromoji"
+        },
+        "length": {
+            "type": "long"
+        },
+        "author": {
+            "type": "keyword"
+        },
+        "modified": {
+            "type": "date"
+        },
+        "text": {
+            "type": "text",
+            "analyzer": "kuromoji"
+        }
     }
   }
 }

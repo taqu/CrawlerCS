@@ -6,8 +6,8 @@ PUT /documents_nlp
   },
   "mappings": {
     "properties": {
-      "id": {
-        "type": "text"
+      "url": {
+        "type": "keyword"
       },
       "passage_embedding": {
         "type": "knn_vector",
