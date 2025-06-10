@@ -1,29 +1,34 @@
 ﻿using Boilerpipe.Net.Extractors;
-using System;
-using System.Buffers;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
+using OpenSearch.Client;
 using System.Diagnostics;
-using System.IO;
 using System.IO.Compression;
-using System.Linq;
 using System.Net;
-using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Runtime;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
-using System.Xml.XPath;
 using static CrawlerCS.Crawler;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace CrawlerCS
 {
     public class Worker
     {
-        private HttpClient httpClient_;
+        public class DocumentEntry
+        {
+            public string url { get; set; } = string.Empty;
+            public string type { get; set; } = string.Empty;
+            public string title { get; set; } = string.Empty;
+            public long length { get; set; } = 0;
+            public string author { get; set; } = string.Empty;
+            public DateTime modified { get; set; } = UnixStart;
+            public string content = string.Empty;
+        }
+
         private Crawler? parent_;
+        private HttpClient httpClient_;
+        private OpenSearchClient openSearchClient_;
+        private string docIndex_ = string.Empty;
+        private string vecIndex_ = string.Empty;
         private static readonly DateTime UnixStart = new DateTime(1970, 1, 1);
 
         public Worker(Crawler? parent)
@@ -37,6 +42,11 @@ namespace CrawlerCS
             httpClient_.DefaultRequestHeaders.Add("Accept", "application/json");
             httpClient_.DefaultRequestHeaders.Add("X-Tika-Skip-Embedded", "true");
             httpClient_.DefaultRequestHeaders.Add("Accept-Encoding", "gzip");
+            docIndex_ = parent.Settings.DocIndex;
+            vecIndex_ = parent.Settings.VecIndex;
+
+            ConnectionSettings settings = new ConnectionSettings(new Uri(parent_.Settings.DBUrl));
+            openSearchClient_ = new OpenSearchClient(settings);
         }
 
         public void Run()
@@ -55,7 +65,8 @@ namespace CrawlerCS
                     {
                         continue;
                     }
-                    if (Upload(item.fileInfo_)) {
+                    if (Upload(item.fileInfo_))
+                    {
                         parent_.HistoryDB.Upsert(item.fileInfo_.FullName, item.fileInfo_.LastWriteTime);
                     }
                 }
@@ -80,16 +91,16 @@ namespace CrawlerCS
             {
                 case "txt":
                 case "text":
-                    case "c":
+                case "c":
                 case "cpp":
-                    case "c++":
-                    case "h":
-                    case "hpp":
-                    case "py":
-                    case "inc":
-                    case "inl":
-                    case "sh":
-                    case "bat":
+                case "c++":
+                case "h":
+                case "hpp":
+                case "py":
+                case "inc":
+                case "inl":
+                case "sh":
+                case "bat":
                     headers.ContentType = new MediaTypeHeaderValue("text/plain");
                     break;
                 case "csv":
@@ -137,13 +148,13 @@ namespace CrawlerCS
             {
                 bool gzip = false;//parent_.Settings.IsGZip(fileInfo.Extension);
                 using (FileStream fileStream = new FileStream(fileInfo.FullName, FileMode.Open, FileAccess.Read))
-                using(StreamContent streamContent = gzip? new StreamContent(new GZipStream(fileStream, CompressionMode.Compress)): new StreamContent(fileStream))
+                using (StreamContent streamContent = gzip ? new StreamContent(new GZipStream(fileStream, CompressionMode.Compress)) : new StreamContent(fileStream))
                 {
                     if (gzip)
                     {
                         streamContent.Headers.ContentEncoding.Add("gzip");
                     }
-                    SetMediaType(streamContent.Headers, fileInfo.Extension);;
+                    SetMediaType(streamContent.Headers, fileInfo.Extension); ;
                     Task<HttpResponseMessage> task = httpClient_.PutAsync(Tika.TikaUrl, streamContent);
                     task.Wait();
                     using HttpResponseMessage result = task.Result;
@@ -158,9 +169,12 @@ namespace CrawlerCS
                     {
                         return false;
                     }
+                    if (string.IsNullOrEmpty(content.content_))
+                    {
+                        return false;
+                    }
                     DebugUtil.Print("{0}\n", Encoding.UTF8.GetString(bytes));
                     DebugUtil.Print("{0}", content.content_);
-                    //CommonExtractors.KeepEverythingExtractor.Process
                     streamContent.Dispose();
                 }
                 return true;
@@ -189,7 +203,7 @@ namespace CrawlerCS
 
             public override int Peek()
             {
-                return next_<end_? bytes_[next_] : -1;
+                return next_ < end_ ? bytes_[next_] : -1;
             }
 
             public override int Read()
@@ -213,7 +227,7 @@ namespace CrawlerCS
                         return -1;
                     }
                     length = 2;
-                    buffer[1] = bytes_[next_+1];
+                    buffer[1] = bytes_[next_ + 1];
                 }
                 else if ((buffer[0] & 0b11110000) == 0b11100000)
                 {
@@ -222,25 +236,27 @@ namespace CrawlerCS
                         return -1;
                     }
                     length = 3;
-                    buffer[1] = bytes_[next_+1];
-                    buffer[2] = bytes_[next_+2];
-                }else if ((buffer[0] & 0b11111000) == 0b11110000)
+                    buffer[1] = bytes_[next_ + 1];
+                    buffer[2] = bytes_[next_ + 2];
+                }
+                else if ((buffer[0] & 0b11111000) == 0b11110000)
                 {
                     if (end_ <= (next_ + 3))
                     {
                         return -1;
                     }
                     length = 4;
-                    buffer[1] = bytes_[next_+1];
-                    buffer[2] = bytes_[next_+2];
-                    buffer[3] = bytes_[next_+3];
+                    buffer[1] = bytes_[next_ + 1];
+                    buffer[2] = bytes_[next_ + 2];
+                    buffer[3] = bytes_[next_ + 3];
                 }
                 string c = Encoding.UTF8.GetString(buffer.Slice(0, length));
                 next_ += length;
-                return 0<c.Length? c[0] : -1;
+                return 0 < c.Length ? c[0] : -1;
             }
         }
 
+        private static readonly byte[] Property_Title = Encoding.UTF8.GetBytes("dc:title");
         private static readonly byte[] Property_Creator = Encoding.UTF8.GetBytes("dc:creator");
         private static readonly byte[] Property_LastAuthor = Encoding.UTF8.GetBytes("meta:last-author");
         private static readonly byte[] Property_Cteated = Encoding.UTF8.GetBytes("dcterms:created");
@@ -258,6 +274,7 @@ namespace CrawlerCS
 
             public string type_ = string.Empty;
             public long length_ = 0;
+            public string title_ = string.Empty;
             public string creator_ = string.Empty;
             public string lastAuthor_ = string.Empty;
             public DateTime created_ = UnixStart;
@@ -277,7 +294,7 @@ namespace CrawlerCS
                         do
                         {
                             reader.Read();
-                        }while(JsonTokenType.EndArray != reader.TokenType);
+                        } while (JsonTokenType.EndArray != reader.TokenType);
                         return true;
                     case JsonTokenType.EndArray:
                         return true;
@@ -297,7 +314,12 @@ namespace CrawlerCS
                 switch (reader.TokenType)
                 {
                     case JsonTokenType.PropertyName:
-                        if (reader.ValueTextEquals(Property_Creator))
+                        if (reader.ValueTextEquals(Property_Title))
+                        {
+                            reader.Read();
+                            content.title_ = reader.GetString();
+                        }
+                        else if (reader.ValueTextEquals(Property_Creator))
                         {
                             reader.Read();
                             content.creator_ = reader.GetString();
@@ -314,12 +336,12 @@ namespace CrawlerCS
                         else if (reader.ValueTextEquals(Property_Cteated))
                         {
                             reader.Read();
-                            content.created_ = reader.GetDateTime();
+                            content.created_ = HistoryDB.RoundDownNanoSeconds(reader.GetDateTime());
                         }
                         else if (reader.ValueTextEquals(Property_Modified))
                         {
                             reader.Read();
-                            content.modified_ = reader.GetDateTime();
+                            content.modified_ = HistoryDB.RoundDownNanoSeconds(reader.GetDateTime());
                         }
                         else if (reader.ValueTextEquals(Property_Length))
                         {
@@ -332,7 +354,7 @@ namespace CrawlerCS
                             reader.Read();
                             if (reader.TokenType == JsonTokenType.StartArray)
                             {
-                                if(!ReadArrayFirst(ref content, reader))
+                                if (!ReadArrayFirst(ref content, reader))
                                 {
                                     throw new Exception();
                                 }
@@ -349,6 +371,7 @@ namespace CrawlerCS
                             long length = reader.ValueSpan.Length;
                             UT8TextReader textReader = new UT8TextReader(bytes, start, start + length);
                             content.content_ = CommonExtractors.KeepEverythingExtractor.GetText(textReader);
+                            content.content_ = Icu.Normalization.Normalizer2.GetNFKCInstance().Normalize(content.content_);
                         }
                         break;
                     default:
@@ -356,6 +379,61 @@ namespace CrawlerCS
                 }
             }
             return content;
+        }
+
+        private enum IndexResult
+        {
+            Created,
+            Updated,
+            NoChanged,
+            Fail,
+        }
+        private IndexResult Index(FileSystemInfo info, Content content)
+        {
+            string url = info.FullName;
+            ISearchResponse<DocumentEntry> searchResponse = openSearchClient_.Search<DocumentEntry>(s => s
+                .Index(docIndex_)
+                .From(0)
+                .Size(10)
+                .Query(q=>q
+                    .Term(t=>t.url, url)
+                )
+            );
+            DocumentEntry? documentEntry;
+            DateTime modified = UnixStart == content.modified_ ? content.created_ : content.modified_;
+            if (searchResponse.Total <= 0)
+            {
+                documentEntry = new DocumentEntry();
+            }
+            else
+            {
+                documentEntry = searchResponse.Documents.First<DocumentEntry>();
+                if (modified <= documentEntry.modified)
+                {
+                    return IndexResult.NoChanged;
+                }
+            }
+
+            documentEntry.url = url;
+            documentEntry.type = content.type_;
+            documentEntry.title = content.title_;
+            documentEntry.length = content.length_;
+            documentEntry.author = string.IsNullOrEmpty(content.lastAuthor_) ? content.creator_ : content.lastAuthor_;
+            documentEntry.modified = modified;
+            documentEntry.content = content.content_;
+            openSearchClient_.Index<DocumentEntry>(documentEntry, idx => idx.Index(docIndex_));
+
+            if (searchResponse.Total <= 0)
+            {
+                IndexResponse response = openSearchClient_.Index<DocumentEntry>(documentEntry, idx => idx.Index(docIndex_).FilterPath("result", "_shards"));
+                return Result.Created == response.Result? IndexResult.Created : IndexResult.Fail;
+            }
+            else
+            {
+                IHit<DocumentEntry> hit = searchResponse.Hits.First<IHit<DocumentEntry>>();
+                UpdateResponse<DocumentEntry> updateResponse = openSearchClient_.Update<DocumentEntry>(hit.Id, u => u.Upsert(documentEntry));
+                return Result.Updated == updateResponse.Result || Result.Created == updateResponse.Result ? IndexResult.Updated : IndexResult.Fail;
+            }
         }
     }
 }

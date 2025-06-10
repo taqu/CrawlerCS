@@ -15,6 +15,10 @@ namespace CrawlerCS
         public string IncludeEx { get => includeEx_; set => includeEx_ = value; }
         public string ExcludeEx { get => excludeEx_; set => excludeEx_ = value; }
         public string GZipEx { get => gzipEx_; set => gzipEx_ = value; }
+        public string DBUrl { get => dbUrl_; set => dbUrl_ = value; }
+        public string DocIndex { get => docIndex_; set => docIndex_ = value; }
+        public string VecIndex { get => vecIndex_; set => vecIndex_ = value; }
+
 
         private string location_ = string.Empty;
         private string domain_ = string.Empty;
@@ -25,6 +29,9 @@ namespace CrawlerCS
         private string includeEx_ = string.Empty;
         private string excludeEx_ = string.Empty;
         private string gzipEx_ = string.Empty;
+        private string dbUrl_ = string.Empty;
+        private string docIndex_ = string.Empty;
+        private string vecIndex_ = string.Empty;
         private HashSet<string> targetExtensions_ = new HashSet<string>();
         private HashSet<string> excludeExtensions_ = new HashSet<string>();
         private HashSet<string> gripExtensions_ = new HashSet<string>();

@@ -1,12 +1,15 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Settings xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-	<Location>LEMON</Location>
+	<Location>2-sakai2</Location>
 	<Domain />
 	<User />
 	<Password />
-	<Root>d/Projects/CrawlerCS/test-data</Root>
+	<Root>d/MyDocuments/Projects/CrawlerCS/test-data</Root>
 	<NumThreads>1</NumThreads>
 	<IncludeEx>*</IncludeEx>
 	<ExcludeEx>zip,tgz,gz,lzh,7z,zstd,cab,ttf,otf,bmp,tga,tiff,jpg,jpeg,png,hdr,webp,svg,flac,ogg,opus,mp3,avi,mp1,mp2,mp4,spx,ogv,flv</ExcludeEx>
 	<GZipEx>text,txt</GZipEx>
+	<DBUrl>"http://localhost:9200"</DBUrl>
+	<DocIndex>documents</DocIndex>
+	<VecIndex>documents_nlp</VecIndex>
 </Settings>
