@@ -1,5 +1,6 @@
 ﻿using Boilerpipe.Net.Extractors;
 using OpenSearch.Client;
+using OpenSearch.Net;
 using SemanticSlicer;
 using SemanticSlicer.Models;
 using System.Diagnostics;
@@ -46,12 +47,20 @@ namespace CrawlerCS
             public string text = string.Empty;
         }
 
+        public class VectorEntry
+        {
+            public string url { get; set; } = string.Empty;
+            public string text = string.Empty;
+        }
+
+        private static readonly DateTime UnixStart = new DateTime(1970, 1, 1);
+
         private Crawler? parent_;
         private HttpClient httpClient_;
         private OpenSearchClient openSearchClient_;
         private string docIndex_ = string.Empty;
         private string vecIndex_ = string.Empty;
-        private static readonly DateTime UnixStart = new DateTime(1970, 1, 1);
+        private StringBuilder stringBuilder_ = new StringBuilder();
 
         public Worker(Crawler? parent)
         {
@@ -202,7 +211,7 @@ namespace CrawlerCS
                         case IndexResult.Fail:
                             return false;
                     }
-                    IndexVectors(content);
+                    return IndexVectors(content);
                 }
                 return true;
             }
@@ -220,11 +229,11 @@ namespace CrawlerCS
             private long end_;
             private long next_;
 
-            public UT8TextReader(byte[] bytes, long start, long end)
+            public UT8TextReader(byte[] bytes, long start, long length)
             {
                 bytes_ = bytes;
                 start_ = start;
-                end_ = end;
+                end_ = start+length;
                 next_ = start_;
             }
 
@@ -333,6 +342,81 @@ namespace CrawlerCS
             return false;
         }
 
+        public static int IsLineFeed(string text, int current)
+        {
+            if (text[current] == '\n')
+            {
+                return 1;
+            }
+            if (text[current] == '\r')
+            {
+                if((current + 1) < text.Length) {
+                    return 1;
+                }
+                return text[current+1] == '\n'? 2 : 1;
+            }
+            return 0;
+        }
+
+        public static bool IsEmptyLine(string text, int lineStart, int lineEnd)
+        {
+            long length = lineEnd - lineStart;
+            if (length <= 0)
+            {
+                return false;
+            }
+            for(int i=lineStart; i<lineEnd; ++i)
+            {
+                if (!char.IsWhiteSpace(text[i])
+                    || '　' != text[i])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        public static long RemoveLine(byte[] bytes, long lineStart, long lineEnd, long length)
+        {
+            long lineLength = lineEnd - lineStart;
+            length -= lineLength;
+            for(long i=lineStart; i<length; ++i)
+            {
+                bytes[i] = bytes[i+lineLength];
+            }
+            return length;
+        }
+
+        public string RemoveEmptyLines(string text)
+        {
+            stringBuilder_.Length = 0;
+            int lineStart = 0;
+            for(int i=0; i<text.Length; ++i){
+                int n = IsLineFeed(text, i);
+                switch (n)
+                {
+                    case 0:
+                        break;
+                    case 1:
+                        break;
+                    case 2:
+                        break;
+                    default:
+                        Debug.Assert(false);
+                        break;
+                }
+            }
+            return new Tuple<long,long>(start, length);
+        }
+
+        public static string RecoverLineFeeds(string text)
+        {
+            text = text.Replace("\\r\\n", "\r\n");
+            text = text.Replace("\\n", "\n");
+            text = text.Replace("\\r", "\r");
+            return text;
+        }
+
         private Content ReadContent(byte[] bytes)
         {
             Content content = new Content();
@@ -396,10 +480,18 @@ namespace CrawlerCS
                         {
                             reader.Read();
                             long start = reader.TokenStartIndex + 1;
-                            long length = reader.ValueSpan.Length;
-                            UT8TextReader textReader = new UT8TextReader(bytes, start, start + length);
+                            long length = reader.HasValueSequence? reader.ValueSequence.Length : reader.ValueSpan.Length;
+                            string original = reader.GetString();
+                            //Tuple<long,long> range = RemoveEmptyLines(bytes, start, length);
+                            //UT8TextReader textReader = new UT8TextReader(bytes, range.Item1, range.Item2);
+                            UT8TextReader textReader = new UT8TextReader(bytes, start, length);
                             content.text_ = CommonExtractors.KeepEverythingExtractor.GetText(textReader);
                             content.text_ = Icu.Normalization.Normalizer2.GetNFKCInstance().Normalize(content.text_);
+                            content.text_ = RecoverLineFeeds(content.text_);
+                            Console.WriteLine("original:");
+                            Console.WriteLine(original);
+                            Console.WriteLine("removed:");
+                            Console.WriteLine(content.text_);
                         }
                         break;
                     default:
@@ -428,7 +520,7 @@ namespace CrawlerCS
             );
             DocumentEntry? documentEntry;
             DateTime modified = UnixStart == content.modified_ ? content.created_ : content.modified_;
-            if (!searchResponse.IsValid || searchResponse.Total <= 0)
+            if (!searchResponse.IsValid)
             {
                 documentEntry = new DocumentEntry();
             }
@@ -450,7 +542,7 @@ namespace CrawlerCS
             documentEntry.text = content.text_;
             openSearchClient_.Index<DocumentEntry>(documentEntry, idx => idx.Index(docIndex_));
 
-            if (!searchResponse.IsValid || searchResponse.Total <= 0)
+            if (!searchResponse.IsValid)
             {
                 IndexResponse response = openSearchClient_.Index<DocumentEntry>(documentEntry, idx => idx.Index(docIndex_).FilterPath("result", "_shards"));
                 return Result.Created == response.Result? IndexResult.Created : IndexResult.Fail;
@@ -473,7 +565,18 @@ namespace CrawlerCS
             SlicerOptions options = new SlicerOptions { MaxChunkTokenCount = parent_.Settings.MaxChunkTokens, Separators = TextSeparators };
             Slicer slicer = new Slicer(options);
             List<DocumentChunk> documentChunks = slicer.GetDocumentChunks(content.text_);
-            return false;
+            BulkResponse response = openSearchClient_.Bulk((BulkDescriptor b) =>
+            {
+                for(int i=0; i<documentChunks.Count; ++i) {
+                    DocumentChunk chunk = documentChunks[i];
+                    b.Create<VectorEntry>(i=>i
+                        .Index(vecIndex_)
+                        .Document(new VectorEntry { url = content.url_, text = chunk.Content })
+                    );
+                }
+                return b;
+            });
+            return response.IsValid;
         }
     }
 }
