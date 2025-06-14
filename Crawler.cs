@@ -1,9 +1,7 @@
 ﻿using OpenSearch.Client;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Reflection.Metadata.Ecma335;
 using static CrawlerCS.Worker;
-using static OpenSearch.Client.JoinField;
 
 namespace CrawlerCS
 {
