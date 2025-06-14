@@ -1,6 +1,5 @@
 ﻿using Boilerpipe.Net.Extractors;
 using OpenSearch.Client;
-using OpenSearch.Net;
 using SemanticSlicer;
 using SemanticSlicer.Models;
 using System.Diagnostics;
@@ -39,6 +38,7 @@ namespace CrawlerCS
         public class DocumentEntry
         {
             public string url { get; set; } = string.Empty;
+            public string dir { get; set; } = string.Empty;
             public string type { get; set; } = string.Empty;
             public string title { get; set; } = string.Empty;
             public long length { get; set; } = 0;
@@ -54,6 +54,18 @@ namespace CrawlerCS
         }
 
         private static readonly DateTime UnixStart = new DateTime(1970, 1, 1);
+
+        public static DateTime RoundDownNanoSeconds(in DateTime dateTime)
+        {
+            return new DateTime(
+                dateTime.Year,
+                dateTime.Month,
+                dateTime.Day,
+                dateTime.Hour,
+                dateTime.Minute,
+                dateTime.Second,
+                dateTime.Millisecond);
+        }
 
         private Crawler? parent_;
         private HttpClient httpClient_;
@@ -92,20 +104,36 @@ namespace CrawlerCS
                     {
                         continue;
                     }
-                    if (!parent_.HistoryDB.NeedsUpdate(item.fileInfo_.FullName, item.fileInfo_.LastWriteTime))
+                    if (!NeedsUpdate(item.fileInfo_.FullName, item.fileInfo_.LastWriteTime))
                     {
                         continue;
                     }
-                    if (Upload(item.fileInfo_))
-                    {
-                        parent_.HistoryDB.Upsert(item.fileInfo_.FullName, item.fileInfo_.LastWriteTime);
-                    }
+                    Upload(item.fileInfo_);
                 }
             }
             catch
             {
                 parent_.AddResult(false);
             }
+        }
+
+        private bool NeedsUpdate(string url, DateTime lastWriteTime)
+        {
+            lastWriteTime = RoundDownNanoSeconds(lastWriteTime);
+            ISearchResponse<DocumentEntry> searchResponse = openSearchClient_.Search<DocumentEntry>(s => s
+                .Index(docIndex_)
+                .From(0)
+                .Size(1)
+                .Source(s=>s.Includes(i=>i.Fields("modified")))
+                .Query(q=>q
+                    .Term(t=>t.url, url)
+                )
+            );
+            if (!searchResponse.IsValid || searchResponse.Hits.Count<=0)
+            {
+                return true;
+            }
+            return searchResponse.Documents.First<DocumentEntry>().modified < lastWriteTime;
         }
 
         private static void SetMediaType(HttpContentHeaders headers, string ext)
@@ -194,13 +222,11 @@ namespace CrawlerCS
                         return false;
                     }
                     byte[] bytes = result.Content.ReadAsByteArrayAsync().Result;
-                    Content content = ReadContent(bytes);
+                    Content content = ReadContent(bytes, fileInfo);
                     if (string.IsNullOrEmpty(content.text_))
                     {
                         return false;
                     }
-                    content.url_ = fileInfo.FullName;
-                    DebugUtil.Print("{0}", content.text_);
                     switch (Index(content))
                     {
                         case IndexResult.Created:
@@ -295,8 +321,8 @@ namespace CrawlerCS
         private static readonly byte[] Property_Title = System.Text.Encoding.UTF8.GetBytes("dc:title");
         private static readonly byte[] Property_Creator = System.Text.Encoding.UTF8.GetBytes("dc:creator");
         private static readonly byte[] Property_LastAuthor = System.Text.Encoding.UTF8.GetBytes("meta:last-author");
-        private static readonly byte[] Property_Cteated = System.Text.Encoding.UTF8.GetBytes("dcterms:created");
-        private static readonly byte[] Property_Modified = System.Text.Encoding.UTF8.GetBytes("dcterms:modified");
+        //private static readonly byte[] Property_Cteated = System.Text.Encoding.UTF8.GetBytes("dcterms:created");
+        //private static readonly byte[] Property_Modified = System.Text.Encoding.UTF8.GetBytes("dcterms:modified");
         private static readonly byte[] Property_Length = System.Text.Encoding.UTF8.GetBytes("Content-Length");
         private static readonly byte[] Property_Type = System.Text.Encoding.UTF8.GetBytes("Content-Type");
         private static readonly byte[] Property_Content = System.Text.Encoding.UTF8.GetBytes("X-TIKA:content");
@@ -309,12 +335,12 @@ namespace CrawlerCS
             }
 
             public string url_ = string.Empty;
+            public string dir_ = string.Empty;
             public string type_ = string.Empty;
             public long length_ = 0;
             public string title_ = string.Empty;
             public string creator_ = string.Empty;
             public string lastAuthor_ = string.Empty;
-            public DateTime created_ = UnixStart;
             public DateTime modified_ = UnixStart;
             public string text_ = string.Empty;
         }
@@ -387,37 +413,128 @@ namespace CrawlerCS
             return length;
         }
 
+        public static bool IsAdditionalSymbol(char c)
+        {
+            if(c=='#' || c=='　' || c=='ー' || c=='＋'|| c=='・' || c == '￥')
+            {
+                return true;
+            }
+            return false;
+        }
+
+        public bool IsEmpryOrSymbolOnly(ReadOnlySpan<char> line)
+        {
+            foreach(char c in line)
+            {
+                if (!char.IsWhiteSpace(c) && !char.IsSymbol(c) && !IsAdditionalSymbol(c))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public string RemoveEmptyLines(string text)
         {
             stringBuilder_.Length = 0;
             int lineStart = 0;
-            for(int i=0; i<text.Length; ++i){
+            for (int i = 0; i < text.Length; ++i)
+            {
                 int n = IsLineFeed(text, i);
                 switch (n)
                 {
                     case 0:
                         break;
                     case 1:
+                        {
+                            ReadOnlySpan<char> line = text.AsSpan(lineStart, i-lineStart);
+                            lineStart = i+1;
+                            if (!IsEmpryOrSymbolOnly(line))
+                            {
+                                stringBuilder_.Append(line);
+                                if (lineStart < text.Length)
+                                {
+                                    stringBuilder_.Append('\n');
+                                }
+                            }
+                        }
                         break;
                     case 2:
+                        {
+                            ReadOnlySpan<char> line = text.AsSpan(lineStart, i-lineStart);
+                            lineStart = i+2;
+                            if (!IsEmpryOrSymbolOnly(line))
+                            {
+                                stringBuilder_.Append(line);
+                                if (lineStart < text.Length)
+                                {
+                                    stringBuilder_.Append('\n');
+                                }
+                            }
+                        }
                         break;
                     default:
                         Debug.Assert(false);
                         break;
                 }
             }
-            return new Tuple<long,long>(start, length);
+            if (lineStart<text.Length)
+            {
+                ReadOnlySpan<char> line = text.AsSpan(lineStart, text.Length-lineStart);
+                if (!IsEmpryOrSymbolOnly(line))
+                {
+                    stringBuilder_.Append(line);
+                }
+            }
+            return stringBuilder_.ToString();
         }
 
-        public static string RecoverLineFeeds(string text)
+        public string RecoverLineFeeds(string text)
         {
-            text = text.Replace("\\r\\n", "\r\n");
-            text = text.Replace("\\n", "\n");
-            text = text.Replace("\\r", "\r");
-            return text;
+            stringBuilder_.Length = 0;
+            for(int i=0; i<text.Length; ++i)
+            {
+                if(text[i] == '\\'){
+                    if (text.Length <= (i + 1))
+                    {
+                        continue;
+                    }
+                    if (text[i+1] == 'r')
+                    {
+                        ++i;
+                        if (text.Length <= (i + 1) || text[i+1] != '\\')
+                        {
+                            stringBuilder_.Append('\r');
+                            continue;
+                        }
+                        if (text.Length <= (i + 2) || text[i+1] != 'n')
+                        {
+                            continue;
+                        }
+                        stringBuilder_.Append('\r');
+                        stringBuilder_.Append('\n');
+                        ++i;
+                        continue;
+                    }
+                    else if(text[i+1] == 'n')
+                    {
+                        stringBuilder_.Append('\n');
+                        ++i;
+                    }
+                    else
+                    {
+                        stringBuilder_.Append(text[i]);
+                    }
+                }
+                else
+                {
+                    stringBuilder_.Append(text[i]);
+                }
+            }
+            return stringBuilder_.ToString();
         }
 
-        private Content ReadContent(byte[] bytes)
+        private Content ReadContent(byte[] bytes, FileSystemInfo fileInfo)
         {
             Content content = new Content();
             Utf8JsonReader reader = new Utf8JsonReader(bytes);
@@ -445,16 +562,6 @@ namespace CrawlerCS
                             reader.Read();
                             content.lastAuthor_ = reader.GetString();
                         }
-                        else if (reader.ValueTextEquals(Property_Cteated))
-                        {
-                            reader.Read();
-                            content.created_ = HistoryDB.RoundDownNanoSeconds(reader.GetDateTime());
-                        }
-                        else if (reader.ValueTextEquals(Property_Modified))
-                        {
-                            reader.Read();
-                            content.modified_ = HistoryDB.RoundDownNanoSeconds(reader.GetDateTime());
-                        }
                         else if (reader.ValueTextEquals(Property_Length))
                         {
                             reader.Read();
@@ -481,23 +588,30 @@ namespace CrawlerCS
                             reader.Read();
                             long start = reader.TokenStartIndex + 1;
                             long length = reader.HasValueSequence? reader.ValueSequence.Length : reader.ValueSpan.Length;
-                            string original = reader.GetString();
-                            //Tuple<long,long> range = RemoveEmptyLines(bytes, start, length);
-                            //UT8TextReader textReader = new UT8TextReader(bytes, range.Item1, range.Item2);
+                            //string original = reader.GetString();
                             UT8TextReader textReader = new UT8TextReader(bytes, start, length);
                             content.text_ = CommonExtractors.KeepEverythingExtractor.GetText(textReader);
                             content.text_ = Icu.Normalization.Normalizer2.GetNFKCInstance().Normalize(content.text_);
                             content.text_ = RecoverLineFeeds(content.text_);
-                            Console.WriteLine("original:");
-                            Console.WriteLine(original);
-                            Console.WriteLine("removed:");
-                            Console.WriteLine(content.text_);
+                            content.text_ = RemoveEmptyLines(content.text_);
+                            //Console.WriteLine("original:");
+                            //Console.WriteLine(original);
+                            //Console.WriteLine("removed:");
+                            //Console.WriteLine(content.text_);
                         }
                         break;
                     default:
                         break;
                 }
+            } //while(reader.Read())
+            content.url_ = fileInfo.FullName;
+            content.dir_ = Path.GetDirectoryName(fileInfo.FullName);
+            content.modified_ = RoundDownNanoSeconds(fileInfo.LastWriteTime);
+            if (string.IsNullOrEmpty(content.title_))
+            {
+                content.title_ = fileInfo.Name;
             }
+
             return content;
         }
 
@@ -513,14 +627,16 @@ namespace CrawlerCS
             ISearchResponse<DocumentEntry> searchResponse = openSearchClient_.Search<DocumentEntry>(s => s
                 .Index(docIndex_)
                 .From(0)
-                .Size(10)
+                .Size(1)
+                .Source(s=>s.Includes(i=>i.Fields("modified")))
                 .Query(q=>q
                     .Term(t=>t.url, content.url_)
                 )
             );
             DocumentEntry? documentEntry;
-            DateTime modified = UnixStart == content.modified_ ? content.created_ : content.modified_;
-            if (!searchResponse.IsValid)
+            DateTime modified = content.modified_;
+            bool create = !searchResponse.IsValid || searchResponse.Hits.Count<=0;
+            if (create)
             {
                 documentEntry = new DocumentEntry();
             }
@@ -534,24 +650,24 @@ namespace CrawlerCS
             }
 
             documentEntry.url = content.url_;
+            documentEntry.dir = content.dir_;
             documentEntry.type = content.type_;
             documentEntry.title = content.title_;
             documentEntry.length = content.length_;
             documentEntry.author = string.IsNullOrEmpty(content.lastAuthor_) ? content.creator_ : content.lastAuthor_;
             documentEntry.modified = modified;
             documentEntry.text = content.text_;
-            openSearchClient_.Index<DocumentEntry>(documentEntry, idx => idx.Index(docIndex_));
 
-            if (!searchResponse.IsValid)
+            if (create)
             {
                 IndexResponse response = openSearchClient_.Index<DocumentEntry>(documentEntry, idx => idx.Index(docIndex_).FilterPath("result", "_shards"));
-                return Result.Created == response.Result? IndexResult.Created : IndexResult.Fail;
+                return response.IsValid && Result.Created == response.Result? IndexResult.Created : IndexResult.Fail;
             }
             else
             {
                 IHit<DocumentEntry> hit = searchResponse.Hits.First<IHit<DocumentEntry>>();
-                UpdateResponse<DocumentEntry> updateResponse = openSearchClient_.Update<DocumentEntry>(hit.Id, u => u.Upsert(documentEntry));
-                return Result.Updated == updateResponse.Result || Result.Created == updateResponse.Result ? IndexResult.Updated : IndexResult.Fail;
+                UpdateResponse<DocumentEntry> response = openSearchClient_.Update<DocumentEntry>(hit.Id, u => u.Index(docIndex_).Doc(documentEntry));
+                return response.IsValid && (Result.Updated == response.Result || Result.Created == response.Result) ? IndexResult.Updated : IndexResult.Fail;
             }
         }
 

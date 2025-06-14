@@ -1,7 +1,11 @@
+PUT /documents
 {
   "mappings": {
     "properties": {
         "url": {
+            "type": "keyword"
+        },
+        "dir": {
             "type": "keyword"
         },
         "type": {
